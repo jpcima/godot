@@ -108,7 +108,10 @@ Error AudioDriverRtAudio::init() {
 	options.numberOfBuffers = 4;
 
 	parameters.firstChannel = 0;
-	mix_rate = GLOBAL_DEF_RST("audio/mix_rate", DEFAULT_MIX_RATE);
+	if (dac->getCurrentApi() != RtAudio::UNIX_JACK)
+		mix_rate = GLOBAL_DEF_RST("audio/mix_rate", DEFAULT_MIX_RATE);
+	else
+		mix_rate = GLOBAL_DEF_RST("audio/mix_rate", dac->getDeviceInfo(parameters.deviceId).preferredSampleRate);
 
 	int latency = GLOBAL_DEF("audio/output_latency", DEFAULT_OUTPUT_LATENCY);
 	unsigned int buffer_frames = closest_power_of_2(latency * mix_rate / 1000);
