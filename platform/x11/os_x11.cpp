@@ -3178,6 +3178,10 @@ OS_X11::OS_X11() {
 	AudioDriverManager::add_driver(&driver_alsa);
 #endif
 
+#ifdef RTAUDIO_ENABLED
+        AudioDriverManager::add_driver(&driver_rtaudio);
+#endif
+
 	layered_window = false;
 	minimized = false;
 	xim_style = 0L;

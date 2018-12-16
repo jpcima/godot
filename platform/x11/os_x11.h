@@ -37,6 +37,7 @@
 #include "drivers/alsa/audio_driver_alsa.h"
 #include "drivers/alsamidi/alsa_midi.h"
 #include "drivers/pulseaudio/audio_driver_pulseaudio.h"
+#include "drivers/rtaudio/audio_driver_rtaudio.h"
 #include "drivers/unix/os_unix.h"
 #include "joypad_linux.h"
 #include "main/input_default.h"
@@ -181,6 +182,10 @@ class OS_X11 : public OS_Unix {
 
 #ifdef PULSEAUDIO_ENABLED
 	AudioDriverPulseAudio driver_pulseaudio;
+#endif
+
+#ifdef RTAUDIO_ENABLED
+        AudioDriverRtAudio driver_rtaudio;
 #endif
 
 	PowerX11 *power_manager;

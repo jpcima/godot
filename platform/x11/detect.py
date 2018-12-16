@@ -64,6 +64,7 @@ def get_opts():
         BoolVariable('use_sanitizer', 'Use LLVM compiler address sanitizer', False),
         BoolVariable('use_leak_sanitizer', 'Use LLVM compiler memory leaks sanitizer (implies use_sanitizer)', False),
         BoolVariable('pulseaudio', 'Detect & use pulseaudio', True),
+        BoolVariable('rtaudio', 'Use rtaudio', True),
         BoolVariable('udev', 'Use udev for gamepad connection callbacks', False),
         EnumVariable('debug_symbols', 'Add debugging symbols to release builds', 'yes', ('yes', 'no', 'full')),
         BoolVariable('separate_debug_symbols', 'Create a separate file containing debugging symbols', False),
@@ -277,6 +278,11 @@ def configure(env):
             env.ParseConfig('pkg-config --cflags --libs libpulse')
         else:
             print("PulseAudio development libraries not found, disabling driver")
+
+    if env['rtaudio']:
+        print("Enabling RtAudio")
+        env.Append(CPPFLAGS=["-DRTAUDIO_ENABLED"])
+        env.ParseConfig('pkg-config --cflags --libs alsa jack')
 
     if (platform.system() == "Linux"):
         env.Append(CPPFLAGS=["-DJOYDEV_ENABLED"])
