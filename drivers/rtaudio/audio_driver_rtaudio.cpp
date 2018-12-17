@@ -107,6 +107,9 @@ Error AudioDriverRtAudio::init() {
 	// set the desired numberOfBuffers
 	options.numberOfBuffers = 4;
 
+	// don't connect to system audio. permits to have more ports than sound card
+	options.flags = RTAUDIO_JACK_DONT_CONNECT;
+
 	parameters.firstChannel = 0;
 	if (dac->getCurrentApi() != RtAudio::UNIX_JACK)
 		mix_rate = GLOBAL_DEF_RST("audio/mix_rate", DEFAULT_MIX_RATE);
@@ -125,6 +128,7 @@ Error AudioDriverRtAudio::init() {
 			case SPEAKER_SURROUND_31: parameters.nChannels = 4; break;
 			case SPEAKER_SURROUND_51: parameters.nChannels = 6; break;
 			case SPEAKER_SURROUND_71: parameters.nChannels = 8; break;
+			case SPEAKER_16: parameters.nChannels = 16; break;
 		};
 
 		try {
@@ -141,6 +145,7 @@ Error AudioDriverRtAudio::init() {
 				case SPEAKER_SURROUND_31: speaker_mode = SPEAKER_MODE_STEREO; break;
 				case SPEAKER_SURROUND_51: speaker_mode = SPEAKER_SURROUND_31; break;
 				case SPEAKER_SURROUND_71: speaker_mode = SPEAKER_SURROUND_51; break;
+				case SPEAKER_16: speaker_mode = SPEAKER_SURROUND_71; break;
 			}
 
 			tries--;

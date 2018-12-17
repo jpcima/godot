@@ -402,5 +402,8 @@
 		<constant name="SPEAKER_SURROUND_71" value="3" enum="SpeakerMode">
 			A 7.1 channel surround setup detected.
 		</constant>
+		<constant name="SPEAKER_16" value="4" enum="SpeakerMode">
+			A 16 channel setup detected.
+		</constant>
 	</constants>
 </class>

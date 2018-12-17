@@ -12,7 +12,7 @@
     RtAudio WWW site: http://www.music.mcgill.ca/~gary/rtaudio/
 
     RtAudio: realtime audio i/o C++ classes
-    Copyright (c) 2001-2016 Gary P. Scavone
+    Copyright (c) 2001-2017 Gary P. Scavone
 
     Permission is hereby granted, free of charge, to any person
     obtaining a copy of this software and associated documentation files
@@ -40,13 +40,14 @@
 */
 /************************************************************************/
 
-// RtAudio: Version 4.1.2
+// RtAudio: Version 5.0.0
 
 #include "RtAudio.h"
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <cmath>
 #include <algorithm>
 
 // Static variable definitions.
@@ -94,44 +95,100 @@ const unsigned int RtApi::SAMPLE_RATES[] = {
 //
 // *************************************************** //
 
-std::string RtAudio :: getVersion( void ) throw()
+std::string RtAudio :: getVersion( void )
 {
   return RTAUDIO_VERSION;
 }
 
-void RtAudio :: getCompiledApi( std::vector<RtAudio::Api> &apis ) throw()
-{
-  apis.clear();
+// Define API names and display names.
+// Must be in same order as API enum.
+extern "C" {
+const char* rtaudio_api_names[][2] = {
+  { "unspecified" , "Unknown" },
+  { "alsa"        , "ALSA" },
+  { "pulse"       , "Pulse" },
+  { "oss"         , "OpenSoundSystem" },
+  { "jack"        , "Jack" },
+  { "core"        , "CoreAudio" },
+  { "wasapi"      , "WASAPI" },
+  { "asio"        , "ASIO" },
+  { "ds"          , "DirectSound" },
+  { "dummy"       , "Dummy" },
+};
+const unsigned int rtaudio_num_api_names = 
+  sizeof(rtaudio_api_names)/sizeof(rtaudio_api_names[0]);
 
-  // The order here will control the order of RtAudio's API search in
-  // the constructor.
+// The order here will control the order of RtAudio's API search in
+// the constructor.
+extern "C" const RtAudio::Api rtaudio_compiled_apis[] = {
 #if defined(__UNIX_JACK__)
-  apis.push_back( UNIX_JACK );
-#endif
-#if defined(__LINUX_ALSA__)
-  apis.push_back( LINUX_ALSA );
+  RtAudio::UNIX_JACK,
 #endif
 #if defined(__LINUX_PULSE__)
-  apis.push_back( LINUX_PULSE );
+  RtAudio::LINUX_PULSE,
+#endif
+#if defined(__LINUX_ALSA__)
+  RtAudio::LINUX_ALSA,
 #endif
 #if defined(__LINUX_OSS__)
-  apis.push_back( LINUX_OSS );
+  RtAudio::LINUX_OSS,
 #endif
 #if defined(__WINDOWS_ASIO__)
-  apis.push_back( WINDOWS_ASIO );
+  RtAudio::WINDOWS_ASIO,
 #endif
 #if defined(__WINDOWS_WASAPI__)
-  apis.push_back( WINDOWS_WASAPI );
+  RtAudio::WINDOWS_WASAPI,
 #endif
 #if defined(__WINDOWS_DS__)
-  apis.push_back( WINDOWS_DS );
+  RtAudio::WINDOWS_DS,
 #endif
 #if defined(__MACOSX_CORE__)
-  apis.push_back( MACOSX_CORE );
+  RtAudio::MACOSX_CORE,
 #endif
 #if defined(__RTAUDIO_DUMMY__)
-  apis.push_back( RTAUDIO_DUMMY );
+  RtAudio::RTAUDIO_DUMMY,
 #endif
+  RtAudio::UNSPECIFIED,
+};
+extern "C" const unsigned int rtaudio_num_compiled_apis =
+  sizeof(rtaudio_compiled_apis)/sizeof(rtaudio_compiled_apis[0])-1;
+}
+
+// This is a compile-time check that rtaudio_num_api_names == RtAudio::NUM_APIS.
+// If the build breaks here, check that they match.
+template<bool b> class StaticAssert { private: StaticAssert() {} };
+template<> class StaticAssert<true>{ public: StaticAssert() {} };
+class StaticAssertions { StaticAssertions() {
+  StaticAssert<rtaudio_num_api_names == RtAudio::NUM_APIS>();
+}};
+
+void RtAudio :: getCompiledApi( std::vector<RtAudio::Api> &apis )
+{
+  apis = std::vector<RtAudio::Api>(rtaudio_compiled_apis,
+                                   rtaudio_compiled_apis + rtaudio_num_compiled_apis);
+}
+
+std::string RtAudio :: getApiName( RtAudio::Api api )
+{
+  if (api < 0 || api >= RtAudio::NUM_APIS)
+    return "";
+  return rtaudio_api_names[api][0];
+}
+
+std::string RtAudio :: getApiDisplayName( RtAudio::Api api )
+{
+  if (api < 0 || api >= RtAudio::NUM_APIS)
+    return "Unknown";
+  return rtaudio_api_names[api][1];
+}
+
+RtAudio::Api RtAudio :: getCompiledApiByName( const std::string &name )
+{
+  unsigned int i=0;
+  for (i = 0; i < rtaudio_num_compiled_apis; ++i)
+    if (name == rtaudio_api_names[rtaudio_compiled_apis[i]][0])
+      return rtaudio_compiled_apis[i];
+  return RtAudio::UNSPECIFIED;
 }
 
 void RtAudio :: openRtApi( RtAudio::Api api )
@@ -211,7 +268,7 @@ RtAudio :: RtAudio( RtAudio::Api api )
   throw( RtAudioError( errorText, RtAudioError::UNSPECIFIED ) );
 }
 
-RtAudio :: ~RtAudio() throw()
+RtAudio :: ~RtAudio()
 {
   if ( rtapi_ )
     delete rtapi_;
@@ -417,7 +474,7 @@ double RtApi :: getStreamTime( void )
   then = stream_.lastTickTimestamp;
   return stream_.streamTime +
     ((now.tv_sec + 0.000001 * now.tv_usec) -
-     (then.tv_sec + 0.000001 * then.tv_usec));
+     (then.tv_sec + 0.000001 * then.tv_usec));     
 #else
   return stream_.streamTime;
 #endif
@@ -429,6 +486,9 @@ void RtApi :: setStreamTime( double time )
 
   if ( time >= 0.0 )
     stream_.streamTime = time;
+#if defined( HAVE_GETTIMEOFDAY )
+  gettimeofday( &stream_.lastTickTimestamp, NULL );
+#endif
 }
 
 unsigned int RtApi :: getStreamSampleRate( void )
@@ -1831,7 +1891,7 @@ bool RtApiCore :: callbackEvent( AudioDeviceID deviceId,
           channelsLeft -= streamChannels;
         }
       }
-
+      
       if ( stream_.doConvertBuffer[1] ) { // convert from our internal "device" buffer
         convertBuffer( stream_.userBuffer[1],
                        stream_.deviceBuffer,
@@ -1942,10 +2002,12 @@ struct JackHandle {
     :client(0), drainCounter(0), internalDrain(false) { ports[0] = 0; ports[1] = 0; xrun[0] = false; xrun[1] = false; }
 };
 
+#if !defined(__RTAUDIO_DEBUG__)
 static void jackSilentError( const char * ) {};
+#endif
 
 RtApiJack :: RtApiJack()
-{
+    :shouldAutoconnect_(true) {
   // Nothing to do here.
 #if !defined(__RTAUDIO_DEBUG__)
   // Turn off Jack's internal error reporting.
@@ -1969,7 +2031,7 @@ unsigned int RtApiJack :: getDeviceCount( void )
   const char **ports;
   std::string port, previousPort;
   unsigned int nChannels = 0, nDevices = 0;
-  ports = jack_get_ports( client, NULL, NULL, 0 );
+  ports = jack_get_ports( client, NULL, JACK_DEFAULT_AUDIO_TYPE, 0 );
   if ( ports ) {
     // Parse the port names up to the first colon (:).
     size_t iColon = 0;
@@ -2008,7 +2070,7 @@ RtAudio::DeviceInfo RtApiJack :: getDeviceInfo( unsigned int device )
   const char **ports;
   std::string port, previousPort;
   unsigned int nPorts = 0, nDevices = 0;
-  ports = jack_get_ports( client, NULL, NULL, 0 );
+  ports = jack_get_ports( client, NULL, JACK_DEFAULT_AUDIO_TYPE, 0 );
   if ( ports ) {
     // Parse the port names up to the first colon (:).
     size_t iColon = 0;
@@ -2043,7 +2105,7 @@ RtAudio::DeviceInfo RtApiJack :: getDeviceInfo( unsigned int device )
   // Count the available ports containing the client name as device
   // channels.  Jack "input ports" equal RtAudio output channels.
   unsigned int nChannels = 0;
-  ports = jack_get_ports( client, info.name.c_str(), NULL, JackPortIsInput );
+  ports = jack_get_ports( client, info.name.c_str(), JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput );
   if ( ports ) {
     while ( ports[ nChannels ] ) nChannels++;
     free( ports );
@@ -2052,7 +2114,7 @@ RtAudio::DeviceInfo RtApiJack :: getDeviceInfo( unsigned int device )
 
   // Jack "output ports" equal RtAudio input channels.
   nChannels = 0;
-  ports = jack_get_ports( client, info.name.c_str(), NULL, JackPortIsOutput );
+  ports = jack_get_ports( client, info.name.c_str(), JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput );
   if ( ports ) {
     while ( ports[ nChannels ] ) nChannels++;
     free( ports );
@@ -2126,7 +2188,7 @@ static void jackShutdown( void *infoPointer )
 
 static int jackXrun( void *infoPointer )
 {
-  JackHandle *handle = (JackHandle *) infoPointer;
+  JackHandle *handle = *((JackHandle **) infoPointer);
 
   if ( handle->ports[0] ) handle->xrun[0] = true;
   if ( handle->ports[1] ) handle->xrun[1] = true;
@@ -2164,7 +2226,7 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
   const char **ports;
   std::string port, previousPort, deviceName;
   unsigned int nPorts = 0, nDevices = 0;
-  ports = jack_get_ports( client, NULL, NULL, 0 );
+  ports = jack_get_ports( client, NULL, JACK_DEFAULT_AUDIO_TYPE, 0 );
   if ( ports ) {
     // Parse the port names up to the first colon (:).
     size_t iColon = 0;
@@ -2188,22 +2250,24 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     return FAILURE;
   }
 
-  // Count the available ports containing the client name as device
-  // channels.  Jack "input ports" equal RtAudio output channels.
-  unsigned int nChannels = 0;
   unsigned long flag = JackPortIsInput;
   if ( mode == INPUT ) flag = JackPortIsOutput;
-  ports = jack_get_ports( client, deviceName.c_str(), NULL, flag );
-  if ( ports ) {
-    while ( ports[ nChannels ] ) nChannels++;
-    free( ports );
-  }
 
-  // Compare the jack ports for specified client to the requested number of channels.
-  if ( nChannels < (channels + firstChannel) ) {
-    errorStream_ << "RtApiJack::probeDeviceOpen: requested number of channels (" << channels << ") + offset (" << firstChannel << ") not found for specified device (" << device << ":" << deviceName << ").";
-    errorText_ = errorStream_.str();
-    return FAILURE;
+  if ( ! (options && (options->flags & RTAUDIO_JACK_DONT_CONNECT)) ) {
+    // Count the available ports containing the client name as device
+    // channels.  Jack "input ports" equal RtAudio output channels.
+    unsigned int nChannels = 0;
+    ports = jack_get_ports( client, deviceName.c_str(), JACK_DEFAULT_AUDIO_TYPE, flag );
+    if ( ports ) {
+      while ( ports[ nChannels ] ) nChannels++;
+      free( ports );
+    }
+    // Compare the jack ports for specified client to the requested number of channels.
+    if ( nChannels < (channels + firstChannel) ) {
+      errorStream_ << "RtApiJack::probeDeviceOpen: requested number of channels (" << channels << ") + offset (" << firstChannel << ") not found for specified device (" << device << ":" << deviceName << ").";
+      errorText_ = errorStream_.str();
+      return FAILURE;
+    }
   }
 
   // Check the jack server sample rate.
@@ -2217,7 +2281,7 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
   stream_.sampleRate = jackRate;
 
   // Get the latency of the JACK port.
-  ports = jack_get_ports( client, deviceName.c_str(), NULL, flag );
+  ports = jack_get_ports( client, deviceName.c_str(), JACK_DEFAULT_AUDIO_TYPE, flag );
   if ( ports[ firstChannel ] ) {
     // Added by Ge Wang
     jack_latency_callback_mode_t cbmode = (mode == INPUT ? JackCaptureLatency : JackPlaybackLatency);
@@ -2330,7 +2394,7 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
   else {
     stream_.mode = mode;
     jack_set_process_callback( handle->client, jackCallbackHandler, (void *) &stream_.callbackInfo );
-    jack_set_xrun_callback( handle->client, jackXrun, (void *) &handle );
+    jack_set_xrun_callback( handle->client, jackXrun, (void *) &stream_.apiHandle );
     jack_on_shutdown( handle->client, jackShutdown, (void *) &stream_.callbackInfo );
   }
 
@@ -2355,6 +2419,8 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
   // buffers to do channel offsets, so we override that parameter
   // here.
   if ( stream_.doConvertBuffer[mode] ) setConvertInfo( mode, 0 );
+
+  if ( options && options->flags & RTAUDIO_JACK_DONT_CONNECT ) shouldAutoconnect_ = false;
 
   return SUCCESS;
 
@@ -2445,9 +2511,9 @@ void RtApiJack :: startStream( void )
   const char **ports;
 
   // Get the list of available ports.
-  if ( stream_.mode == OUTPUT || stream_.mode == DUPLEX ) {
+  if ( shouldAutoconnect_ && (stream_.mode == OUTPUT || stream_.mode == DUPLEX) ) {
     result = 1;
-    ports = jack_get_ports( handle->client, handle->deviceName[0].c_str(), NULL, JackPortIsInput);
+    ports = jack_get_ports( handle->client, handle->deviceName[0].c_str(), JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput);
     if ( ports == NULL) {
       errorText_ = "RtApiJack::startStream(): error determining available JACK input ports!";
       goto unlock;
@@ -2469,9 +2535,9 @@ void RtApiJack :: startStream( void )
     free(ports);
   }
 
-  if ( stream_.mode == INPUT || stream_.mode == DUPLEX ) {
+  if ( shouldAutoconnect_ && (stream_.mode == INPUT || stream_.mode == DUPLEX) ) {
     result = 1;
-    ports = jack_get_ports( handle->client, handle->deviceName[1].c_str(), NULL, JackPortIsOutput );
+    ports = jack_get_ports( handle->client, handle->deviceName[1].c_str(), JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput );
     if ( ports == NULL) {
       errorText_ = "RtApiJack::startStream(): error determining available JACK output ports!";
       goto unlock;
@@ -2718,7 +2784,7 @@ RtApiAsio :: RtApiAsio()
   // CoInitialize beforehand, but it must be for appartment threading
   // (in which case, CoInitilialize will return S_FALSE here).
   coInitialized_ = false;
-  HRESULT hr = CoInitialize( NULL );
+  HRESULT hr = CoInitialize( NULL ); 
   if ( FAILED(hr) ) {
     errorText_ = "RtApiAsio::ASIO requires a single-threaded appartment. Call CoInitializeEx(0,COINIT_APARTMENTTHREADED)";
     error( RtAudioError::WARNING );
@@ -3157,8 +3223,8 @@ bool RtApiAsio :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
   result = ASIOCreateBuffers( handle->bufferInfos, nChannels, stream_.bufferSize, &asioCallbacks );
   if ( result != ASE_OK ) {
     // Standard method failed. This can happen with strict/misbehaving drivers that return valid buffer size ranges
-    // but only accept the preferred buffer size as parameter for ASIOCreateBuffers. eg. Creatives ASIO driver
-    // in that case, let's be naïve and try that instead
+    // but only accept the preferred buffer size as parameter for ASIOCreateBuffers (e.g. Creative's ASIO driver).
+    // In that case, let's be naïve and try that instead.
     *bufferSize = preferSize;
     stream_.bufferSize = *bufferSize;
     result = ASIOCreateBuffers( handle->bufferInfos, nChannels, stream_.bufferSize, &asioCallbacks );
@@ -3169,7 +3235,7 @@ bool RtApiAsio :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     errorText_ = errorStream_.str();
     goto error;
   }
-  buffersAllocated = true;
+  buffersAllocated = true;  
   stream_.state = STREAM_STOPPED;
 
   // Set flags for buffer conversion.
@@ -3643,13 +3709,13 @@ static long asioMessages( long selector, long value, void* /*message*/, double* 
 
 static const char* getAsioErrorString( ASIOError result )
 {
-  struct Messages
+  struct Messages 
   {
     ASIOError value;
     const char*message;
   };
 
-  static const Messages m[] =
+  static const Messages m[] = 
     {
       {   ASE_NotPresent,    "Hardware input or output is not present or available." },
       {   ASE_HWMalfunction,  "Hardware is malfunctioning." },
@@ -3681,10 +3747,32 @@ static const char* getAsioErrorString( ASIOError result )
 #ifndef INITGUID
   #define INITGUID
 #endif
+
+#include <mfapi.h>
+#include <mferror.h>
+#include <mfplay.h>
+#include <mftransform.h>
+#include <wmcodecdsp.h>
+
 #include <audioclient.h>
 #include <avrt.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
+
+#ifndef MF_E_TRANSFORM_NEED_MORE_INPUT
+  #define MF_E_TRANSFORM_NEED_MORE_INPUT _HRESULT_TYPEDEF_(0xc00d6d72)
+#endif
+
+#ifndef MFSTARTUP_NOSOCKET
+  #define MFSTARTUP_NOSOCKET 0x1
+#endif
+
+#ifdef _MSC_VER
+  #pragma comment( lib, "ksuser" )
+  #pragma comment( lib, "mfplat.lib" )
+  #pragma comment( lib, "mfuuid.lib" )
+  #pragma comment( lib, "wmcodecdspuuid" )
+#endif
 
 //=============================================================================
 
@@ -3859,57 +3947,194 @@ private:
 //-----------------------------------------------------------------------------
 
 // In order to satisfy WASAPI's buffer requirements, we need a means of converting sample rate
-// between HW and the user. The convertBufferWasapi function is used to perform this conversion
-// between HwIn->UserIn and UserOut->HwOut during the stream callback loop.
-// This sample rate converter favors speed over quality, and works best with conversions between
-// one rate and its multiple.
-void convertBufferWasapi( char* outBuffer,
-                          const char* inBuffer,
-                          const unsigned int& channelCount,
-                          const unsigned int& inSampleRate,
-                          const unsigned int& outSampleRate,
-                          const unsigned int& inSampleCount,
-                          unsigned int& outSampleCount,
-                          const RtAudioFormat& format )
+// between HW and the user. The WasapiResampler class is used to perform this conversion between
+// HwIn->UserIn and UserOut->HwOut during the stream callback loop.
+class WasapiResampler
 {
-  // calculate the new outSampleCount and relative sampleStep
-  float sampleRatio = ( float ) outSampleRate / inSampleRate;
-  float sampleStep = 1.0f / sampleRatio;
-  float inSampleFraction = 0.0f;
+public:
+  WasapiResampler( bool isFloat, unsigned int bitsPerSample, unsigned int channelCount,
+                   unsigned int inSampleRate, unsigned int outSampleRate )
+    : _bytesPerSample( bitsPerSample / 8 )
+    , _channelCount( channelCount )
+    , _sampleRatio( ( float ) outSampleRate / inSampleRate )
+    , _transformUnk( NULL )
+    , _transform( NULL )
+    , _mediaType( NULL )
+    , _inputMediaType( NULL )
+    , _outputMediaType( NULL )
 
-  outSampleCount = ( unsigned int ) roundf( inSampleCount * sampleRatio );
-
-  // frame-by-frame, copy each relative input sample into it's corresponding output sample
-  for ( unsigned int outSample = 0; outSample < outSampleCount; outSample++ )
+    #ifdef __IWMResamplerProps_FWD_DEFINED__
+      , _resamplerProps( NULL )
+    #endif
   {
-    unsigned int inSample = ( unsigned int ) inSampleFraction;
+    // 1. Initialization
 
-    switch ( format )
+    MFStartup( MF_VERSION, MFSTARTUP_NOSOCKET );
+
+    // 2. Create Resampler Transform Object
+
+    CoCreateInstance( CLSID_CResamplerMediaObject, NULL, CLSCTX_INPROC_SERVER,
+                      IID_IUnknown, ( void** ) &_transformUnk );
+
+    _transformUnk->QueryInterface( IID_PPV_ARGS( &_transform ) );
+
+    #ifdef __IWMResamplerProps_FWD_DEFINED__
+      _transformUnk->QueryInterface( IID_PPV_ARGS( &_resamplerProps ) );
+      _resamplerProps->SetHalfFilterLength( 60 ); // best conversion quality
+    #endif
+
+    // 3. Specify input / output format
+
+    MFCreateMediaType( &_mediaType );
+    _mediaType->SetGUID( MF_MT_MAJOR_TYPE, MFMediaType_Audio );
+    _mediaType->SetGUID( MF_MT_SUBTYPE, isFloat ? MFAudioFormat_Float : MFAudioFormat_PCM );
+    _mediaType->SetUINT32( MF_MT_AUDIO_NUM_CHANNELS, channelCount );
+    _mediaType->SetUINT32( MF_MT_AUDIO_SAMPLES_PER_SECOND, inSampleRate );
+    _mediaType->SetUINT32( MF_MT_AUDIO_BLOCK_ALIGNMENT, _bytesPerSample * channelCount );
+    _mediaType->SetUINT32( MF_MT_AUDIO_AVG_BYTES_PER_SECOND, _bytesPerSample * channelCount * inSampleRate );
+    _mediaType->SetUINT32( MF_MT_AUDIO_BITS_PER_SAMPLE, bitsPerSample );
+    _mediaType->SetUINT32( MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE );
+
+    MFCreateMediaType( &_inputMediaType );
+    _mediaType->CopyAllItems( _inputMediaType );
+
+    _transform->SetInputType( 0, _inputMediaType, 0 );
+
+    MFCreateMediaType( &_outputMediaType );
+    _mediaType->CopyAllItems( _outputMediaType );
+
+    _outputMediaType->SetUINT32( MF_MT_AUDIO_SAMPLES_PER_SECOND, outSampleRate );
+    _outputMediaType->SetUINT32( MF_MT_AUDIO_AVG_BYTES_PER_SECOND, _bytesPerSample * channelCount * outSampleRate );
+
+    _transform->SetOutputType( 0, _outputMediaType, 0 );
+
+    // 4. Send stream start messages to Resampler
+
+    _transform->ProcessMessage( MFT_MESSAGE_COMMAND_FLUSH, 0 );
+    _transform->ProcessMessage( MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0 );
+    _transform->ProcessMessage( MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0 );
+  }
+
+  ~WasapiResampler()
+  {
+    // 8. Send stream stop messages to Resampler
+
+    _transform->ProcessMessage( MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0 );
+    _transform->ProcessMessage( MFT_MESSAGE_NOTIFY_END_STREAMING, 0 );
+
+    // 9. Cleanup
+
+    MFShutdown();
+
+    SAFE_RELEASE( _transformUnk );
+    SAFE_RELEASE( _transform );
+    SAFE_RELEASE( _mediaType );
+    SAFE_RELEASE( _inputMediaType );
+    SAFE_RELEASE( _outputMediaType );
+
+    #ifdef __IWMResamplerProps_FWD_DEFINED__
+      SAFE_RELEASE( _resamplerProps );
+    #endif
+  }
+
+  void Convert( char* outBuffer, const char* inBuffer, unsigned int inSampleCount, unsigned int& outSampleCount )
+  {
+    unsigned int inputBufferSize = _bytesPerSample * _channelCount * inSampleCount;
+    if ( _sampleRatio == 1 )
     {
-      case RTAUDIO_SINT8:
-        memcpy( &( ( char* ) outBuffer )[ outSample * channelCount ], &( ( char* ) inBuffer )[ inSample * channelCount ], channelCount * sizeof( char ) );
-        break;
-      case RTAUDIO_SINT16:
-        memcpy( &( ( short* ) outBuffer )[ outSample * channelCount ], &( ( short* ) inBuffer )[ inSample * channelCount ], channelCount * sizeof( short ) );
-        break;
-      case RTAUDIO_SINT24:
-        memcpy( &( ( S24* ) outBuffer )[ outSample * channelCount ], &( ( S24* ) inBuffer )[ inSample * channelCount ], channelCount * sizeof( S24 ) );
-        break;
-      case RTAUDIO_SINT32:
-        memcpy( &( ( int* ) outBuffer )[ outSample * channelCount ], &( ( int* ) inBuffer )[ inSample * channelCount ], channelCount * sizeof( int ) );
-        break;
-      case RTAUDIO_FLOAT32:
-        memcpy( &( ( float* ) outBuffer )[ outSample * channelCount ], &( ( float* ) inBuffer )[ inSample * channelCount ], channelCount * sizeof( float ) );
-        break;
-      case RTAUDIO_FLOAT64:
-        memcpy( &( ( double* ) outBuffer )[ outSample * channelCount ], &( ( double* ) inBuffer )[ inSample * channelCount ], channelCount * sizeof( double ) );
-        break;
+      // no sample rate conversion required
+      memcpy( outBuffer, inBuffer, inputBufferSize );
+      outSampleCount = inSampleCount;
+      return;
     }
 
-    // jump to next in sample
-    inSampleFraction += sampleStep;
+    unsigned int outputBufferSize = ( unsigned int ) ceilf( inputBufferSize * _sampleRatio ) + ( _bytesPerSample * _channelCount );
+
+    IMFMediaBuffer* rInBuffer;
+    IMFSample* rInSample;
+    BYTE* rInByteBuffer = NULL;
+
+    // 5. Create Sample object from input data
+
+    MFCreateMemoryBuffer( inputBufferSize, &rInBuffer );
+
+    rInBuffer->Lock( &rInByteBuffer, NULL, NULL );
+    memcpy( rInByteBuffer, inBuffer, inputBufferSize );
+    rInBuffer->Unlock();
+    rInByteBuffer = NULL;
+
+    rInBuffer->SetCurrentLength( inputBufferSize );
+
+    MFCreateSample( &rInSample );
+    rInSample->AddBuffer( rInBuffer );
+
+    // 6. Pass input data to Resampler
+
+    _transform->ProcessInput( 0, rInSample, 0 );
+
+    SAFE_RELEASE( rInBuffer );
+    SAFE_RELEASE( rInSample );
+
+    // 7. Perform sample rate conversion
+
+    IMFMediaBuffer* rOutBuffer = NULL;
+    BYTE* rOutByteBuffer = NULL;
+
+    MFT_OUTPUT_DATA_BUFFER rOutDataBuffer;
+    DWORD rStatus;
+    DWORD rBytes = outputBufferSize; // maximum bytes accepted per ProcessOutput
+
+    // 7.1 Create Sample object for output data
+
+    memset( &rOutDataBuffer, 0, sizeof rOutDataBuffer );
+    MFCreateSample( &( rOutDataBuffer.pSample ) );
+    MFCreateMemoryBuffer( rBytes, &rOutBuffer );
+    rOutDataBuffer.pSample->AddBuffer( rOutBuffer );
+    rOutDataBuffer.dwStreamID = 0;
+    rOutDataBuffer.dwStatus = 0;
+    rOutDataBuffer.pEvents = NULL;
+
+    // 7.2 Get output data from Resampler
+
+    if ( _transform->ProcessOutput( 0, 1, &rOutDataBuffer, &rStatus ) == MF_E_TRANSFORM_NEED_MORE_INPUT )
+    {
+      outSampleCount = 0;
+      SAFE_RELEASE( rOutBuffer );
+      SAFE_RELEASE( rOutDataBuffer.pSample );
+      return;
+    }
+
+    // 7.3 Write output data to outBuffer
+
+    SAFE_RELEASE( rOutBuffer );
+    rOutDataBuffer.pSample->ConvertToContiguousBuffer( &rOutBuffer );
+    rOutBuffer->GetCurrentLength( &rBytes );
+
+    rOutBuffer->Lock( &rOutByteBuffer, NULL, NULL );
+    memcpy( outBuffer, rOutByteBuffer, rBytes );
+    rOutBuffer->Unlock();
+    rOutByteBuffer = NULL;
+
+    outSampleCount = rBytes / _bytesPerSample / _channelCount;
+    SAFE_RELEASE( rOutBuffer );
+    SAFE_RELEASE( rOutDataBuffer.pSample );
   }
-}
+
+private:
+  unsigned int _bytesPerSample;
+  unsigned int _channelCount;
+  float _sampleRatio;
+
+  IUnknown* _transformUnk;
+  IMFTransform* _transform;
+  IMFMediaType* _mediaType;
+  IMFMediaType* _inputMediaType;
+  IMFMediaType* _outputMediaType;
+
+  #ifdef __IWMResamplerProps_FWD_DEFINED__
+    IWMResamplerProps* _resamplerProps;
+  #endif
+};
 
 //-----------------------------------------------------------------------------
 
@@ -3947,10 +4172,9 @@ RtApiWasapi::RtApiWasapi()
                          CLSCTX_ALL, __uuidof( IMMDeviceEnumerator ),
                          ( void** ) &deviceEnumerator_ );
 
-  if ( FAILED( hr ) ) {
-    errorText_ = "RtApiWasapi::RtApiWasapi: Unable to instantiate device enumerator";
-    error( RtAudioError::DRIVER_ERROR );
-  }
+  // If this runs on an old Windows, it will fail. Ignore and proceed.
+  if ( FAILED( hr ) )
+    deviceEnumerator_ = NULL;
 }
 
 //-----------------------------------------------------------------------------
@@ -3976,6 +4200,9 @@ unsigned int RtApiWasapi::getDeviceCount( void )
 
   IMMDeviceCollection* captureDevices = NULL;
   IMMDeviceCollection* renderDevices = NULL;
+
+  if ( !deviceEnumerator_ )
+    return 0;
 
   // Count capture devices
   errorText_.clear();
@@ -4502,7 +4729,7 @@ bool RtApiWasapi::probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     goto Exit;
   }
 
-  // determine whether index falls within capture or render devices
+  // if device index falls within capture devices
   if ( device >= renderDeviceCount ) {
     if ( mode != INPUT ) {
       errorType = RtAudioError::INVALID_USE;
@@ -4522,28 +4749,66 @@ bool RtApiWasapi::probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     hr = devicePtr->Activate( __uuidof( IAudioClient ), CLSCTX_ALL,
                               NULL, ( void** ) &captureAudioClient );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve device audio client.";
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve capture device audio client.";
       goto Exit;
     }
 
     hr = captureAudioClient->GetMixFormat( &deviceFormat );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve device mix format.";
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve capture device mix format.";
       goto Exit;
     }
 
     stream_.nDeviceChannels[mode] = deviceFormat->nChannels;
     captureAudioClient->GetStreamLatency( ( long long* ) &stream_.latency[mode] );
   }
-  else {
-    if ( mode != OUTPUT ) {
-      errorType = RtAudioError::INVALID_USE;
-      errorText_ = "RtApiWasapi::probeDeviceOpen: Render device selected as input device.";
+
+  // if device index falls within render devices and is configured for loopback
+  if ( device < renderDeviceCount && mode == INPUT )
+  {
+    // if renderAudioClient is not initialised, initialise it now
+    IAudioClient*& renderAudioClient = ( ( WasapiHandle* ) stream_.apiHandle )->renderAudioClient;
+    if ( !renderAudioClient )
+    {
+      probeDeviceOpen( device, OUTPUT, channels, firstChannel, sampleRate, format, bufferSize, options );
+    }
+
+    // retrieve captureAudioClient from devicePtr
+    IAudioClient*& captureAudioClient = ( ( WasapiHandle* ) stream_.apiHandle )->captureAudioClient;
+
+    hr = renderDevices->Item( device, &devicePtr );
+    if ( FAILED( hr ) ) {
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve render device handle.";
       goto Exit;
     }
 
-    // retrieve renderAudioClient from devicePtr
+    hr = devicePtr->Activate( __uuidof( IAudioClient ), CLSCTX_ALL,
+                              NULL, ( void** ) &captureAudioClient );
+    if ( FAILED( hr ) ) {
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve render device audio client.";
+      goto Exit;
+    }
+
+    hr = captureAudioClient->GetMixFormat( &deviceFormat );
+    if ( FAILED( hr ) ) {
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve render device mix format.";
+      goto Exit;
+    }
+
+    stream_.nDeviceChannels[mode] = deviceFormat->nChannels;
+    captureAudioClient->GetStreamLatency( ( long long* ) &stream_.latency[mode] );
+  }
+
+  // if device index falls within render devices and is configured for output
+  if ( device < renderDeviceCount && mode == OUTPUT )
+  {
+    // if renderAudioClient is already initialised, don't initialise it again
     IAudioClient*& renderAudioClient = ( ( WasapiHandle* ) stream_.apiHandle )->renderAudioClient;
+    if ( renderAudioClient )
+    {
+      methodResult = SUCCESS;
+      goto Exit;
+    }
 
     hr = renderDevices->Item( device, &devicePtr );
     if ( FAILED( hr ) ) {
@@ -4554,13 +4819,13 @@ bool RtApiWasapi::probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     hr = devicePtr->Activate( __uuidof( IAudioClient ), CLSCTX_ALL,
                               NULL, ( void** ) &renderAudioClient );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve device audio client.";
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve render device audio client.";
       goto Exit;
     }
 
     hr = renderAudioClient->GetMixFormat( &deviceFormat );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve device mix format.";
+      errorText_ = "RtApiWasapi::probeDeviceOpen: Unable to retrieve render device mix format.";
       goto Exit;
     }
 
@@ -4596,7 +4861,9 @@ bool RtApiWasapi::probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
   // Set flags for buffer conversion.
   stream_.doConvertBuffer[mode] = false;
   if ( stream_.userFormat != stream_.deviceFormat[mode] ||
-       stream_.nUserChannels != stream_.nDeviceChannels )
+       stream_.nUserChannels[0] != stream_.nDeviceChannels[0] ||
+       stream_.nUserChannels[1] != stream_.nDeviceChannels[1] ||
+       stream_.userInterleaved )
     stream_.doConvertBuffer[mode] = true;
   else if ( stream_.userInterleaved != stream_.deviceInterleaved[mode] &&
             stream_.nUserChannels[mode] > 1 )
@@ -4689,6 +4956,8 @@ void RtApiWasapi::wasapiThread()
   float renderSrRatio = 0.0f;
   WasapiBuffer captureBuffer;
   WasapiBuffer renderBuffer;
+  WasapiResampler* captureResampler = NULL;
+  WasapiResampler* renderResampler = NULL;
 
   // declare local stream variables
   RtAudioCallback callback = ( RtAudioCallback ) stream_.callbackInfo.callback;
@@ -4697,7 +4966,8 @@ void RtApiWasapi::wasapiThread()
   unsigned int bufferFrameCount = 0;
   unsigned int numFramesPadding = 0;
   unsigned int convBufferSize = 0;
-  bool callbackPushed = false;
+  bool loopbackEnabled = stream_.device[INPUT] == stream_.device[OUTPUT];
+  bool callbackPushed = true;
   bool callbackPulled = false;
   bool callbackStopped = false;
   int callbackResult = 0;
@@ -4707,7 +4977,7 @@ void RtApiWasapi::wasapiThread()
   unsigned int convBuffSize = 0;
   unsigned int deviceBuffSize = 0;
 
-  errorText_.clear();
+  std::string errorText;
   RtAudioError::Type errorType = RtAudioError::DRIVER_ERROR;
 
   // Attempt to assign "Pro Audio" characteristic to thread
@@ -4723,62 +4993,68 @@ void RtApiWasapi::wasapiThread()
   if ( captureAudioClient ) {
     hr = captureAudioClient->GetMixFormat( &captureFormat );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve device mix format.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to retrieve device mix format.";
       goto Exit;
     }
 
-    captureSrRatio = ( ( float ) captureFormat->nSamplesPerSec / stream_.sampleRate );
+    // init captureResampler
+    captureResampler = new WasapiResampler( stream_.deviceFormat[INPUT] == RTAUDIO_FLOAT32 || stream_.deviceFormat[INPUT] == RTAUDIO_FLOAT64,
+                                            formatBytes( stream_.deviceFormat[INPUT] ) * 8, stream_.nDeviceChannels[INPUT],
+                                            captureFormat->nSamplesPerSec, stream_.sampleRate );
 
-    // initialize capture stream according to desire buffer size
-    float desiredBufferSize = stream_.bufferSize * captureSrRatio;
-    REFERENCE_TIME desiredBufferPeriod = ( REFERENCE_TIME ) ( ( float ) desiredBufferSize * 10000000 / captureFormat->nSamplesPerSec );
+    captureSrRatio = ( ( float ) captureFormat->nSamplesPerSec / stream_.sampleRate );
 
     if ( !captureClient ) {
       hr = captureAudioClient->Initialize( AUDCLNT_SHAREMODE_SHARED,
-                                           AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                                           desiredBufferPeriod,
-                                           desiredBufferPeriod,
+                                           loopbackEnabled ? AUDCLNT_STREAMFLAGS_LOOPBACK : AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                           0,
+                                           0,
                                            captureFormat,
                                            NULL );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to initialize capture audio client.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to initialize capture audio client.";
         goto Exit;
       }
 
       hr = captureAudioClient->GetService( __uuidof( IAudioCaptureClient ),
                                            ( void** ) &captureClient );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve capture client handle.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to retrieve capture client handle.";
         goto Exit;
       }
 
-      // configure captureEvent to trigger on every available capture buffer
-      captureEvent = CreateEvent( NULL, FALSE, FALSE, NULL );
-      if ( !captureEvent ) {
-        errorType = RtAudioError::SYSTEM_ERROR;
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to create capture event.";
-        goto Exit;
-      }
+      // don't configure captureEvent if in loopback mode
+      if ( !loopbackEnabled )
+      {
+        // configure captureEvent to trigger on every available capture buffer
+        captureEvent = CreateEvent( NULL, FALSE, FALSE, NULL );
+        if ( !captureEvent ) {
+          errorType = RtAudioError::SYSTEM_ERROR;
+          errorText = "RtApiWasapi::wasapiThread: Unable to create capture event.";
+          goto Exit;
+        }
 
-      hr = captureAudioClient->SetEventHandle( captureEvent );
-      if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to set capture event handle.";
-        goto Exit;
+        hr = captureAudioClient->SetEventHandle( captureEvent );
+        if ( FAILED( hr ) ) {
+          errorText = "RtApiWasapi::wasapiThread: Unable to set capture event handle.";
+          goto Exit;
+        }
+
+        ( ( WasapiHandle* ) stream_.apiHandle )->captureEvent = captureEvent;
       }
 
       ( ( WasapiHandle* ) stream_.apiHandle )->captureClient = captureClient;
-      ( ( WasapiHandle* ) stream_.apiHandle )->captureEvent = captureEvent;
     }
 
     unsigned int inBufferSize = 0;
     hr = captureAudioClient->GetBufferSize( &inBufferSize );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to get capture buffer size.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to get capture buffer size.";
       goto Exit;
     }
 
     // scale outBufferSize according to stream->user sample rate ratio
-    unsigned int outBufferSize = ( unsigned int ) ( stream_.bufferSize * captureSrRatio ) * stream_.nDeviceChannels[INPUT];
+    unsigned int outBufferSize = ( unsigned int ) ceilf( stream_.bufferSize * captureSrRatio ) * stream_.nDeviceChannels[INPUT];
     inBufferSize *= stream_.nDeviceChannels[INPUT];
 
     // set captureBuffer size
@@ -4787,14 +5063,14 @@ void RtApiWasapi::wasapiThread()
     // reset the capture stream
     hr = captureAudioClient->Reset();
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to reset capture stream.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to reset capture stream.";
       goto Exit;
     }
 
     // start the capture stream
     hr = captureAudioClient->Start();
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to start capture stream.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to start capture stream.";
       goto Exit;
     }
   }
@@ -4803,32 +5079,33 @@ void RtApiWasapi::wasapiThread()
   if ( renderAudioClient ) {
     hr = renderAudioClient->GetMixFormat( &renderFormat );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve device mix format.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to retrieve device mix format.";
       goto Exit;
     }
 
-    renderSrRatio = ( ( float ) renderFormat->nSamplesPerSec / stream_.sampleRate );
+    // init renderResampler
+    renderResampler = new WasapiResampler( stream_.deviceFormat[OUTPUT] == RTAUDIO_FLOAT32 || stream_.deviceFormat[OUTPUT] == RTAUDIO_FLOAT64,
+                                           formatBytes( stream_.deviceFormat[OUTPUT] ) * 8, stream_.nDeviceChannels[OUTPUT],
+                                           stream_.sampleRate, renderFormat->nSamplesPerSec );
 
-    // initialize render stream according to desire buffer size
-    float desiredBufferSize = stream_.bufferSize * renderSrRatio;
-    REFERENCE_TIME desiredBufferPeriod = ( REFERENCE_TIME ) ( ( float ) desiredBufferSize * 10000000 / renderFormat->nSamplesPerSec );
+    renderSrRatio = ( ( float ) renderFormat->nSamplesPerSec / stream_.sampleRate );
 
     if ( !renderClient ) {
       hr = renderAudioClient->Initialize( AUDCLNT_SHAREMODE_SHARED,
                                           AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                                          desiredBufferPeriod,
-                                          desiredBufferPeriod,
+                                          0,
+                                          0,
                                           renderFormat,
                                           NULL );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to initialize render audio client.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to initialize render audio client.";
         goto Exit;
       }
 
       hr = renderAudioClient->GetService( __uuidof( IAudioRenderClient ),
                                           ( void** ) &renderClient );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve render client handle.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to retrieve render client handle.";
         goto Exit;
       }
 
@@ -4836,13 +5113,13 @@ void RtApiWasapi::wasapiThread()
       renderEvent = CreateEvent( NULL, FALSE, FALSE, NULL );
       if ( !renderEvent ) {
         errorType = RtAudioError::SYSTEM_ERROR;
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to create render event.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to create render event.";
         goto Exit;
       }
 
       hr = renderAudioClient->SetEventHandle( renderEvent );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to set render event handle.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to set render event handle.";
         goto Exit;
       }
 
@@ -4853,12 +5130,12 @@ void RtApiWasapi::wasapiThread()
     unsigned int outBufferSize = 0;
     hr = renderAudioClient->GetBufferSize( &outBufferSize );
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to get render buffer size.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to get render buffer size.";
       goto Exit;
     }
 
     // scale inBufferSize according to user->stream sample rate ratio
-    unsigned int inBufferSize = ( unsigned int ) ( stream_.bufferSize * renderSrRatio ) * stream_.nDeviceChannels[OUTPUT];
+    unsigned int inBufferSize = ( unsigned int ) ceilf( stream_.bufferSize * renderSrRatio ) * stream_.nDeviceChannels[OUTPUT];
     outBufferSize *= stream_.nDeviceChannels[OUTPUT];
 
     // set renderBuffer size
@@ -4867,38 +5144,44 @@ void RtApiWasapi::wasapiThread()
     // reset the render stream
     hr = renderAudioClient->Reset();
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to reset render stream.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to reset render stream.";
       goto Exit;
     }
 
     // start the render stream
     hr = renderAudioClient->Start();
     if ( FAILED( hr ) ) {
-      errorText_ = "RtApiWasapi::wasapiThread: Unable to start render stream.";
+      errorText = "RtApiWasapi::wasapiThread: Unable to start render stream.";
       goto Exit;
     }
   }
 
-  if ( stream_.mode == INPUT ) {
-    convBuffSize = ( size_t ) ( stream_.bufferSize * captureSrRatio ) * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] );
+  // malloc buffer memory
+  if ( stream_.mode == INPUT )
+  {
+    using namespace std; // for ceilf
+    convBuffSize = ( size_t ) ( ceilf( stream_.bufferSize * captureSrRatio ) ) * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] );
     deviceBuffSize = stream_.bufferSize * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] );
   }
-  else if ( stream_.mode == OUTPUT ) {
-    convBuffSize = ( size_t ) ( stream_.bufferSize * renderSrRatio ) * stream_.nDeviceChannels[OUTPUT] * formatBytes( stream_.deviceFormat[OUTPUT] );
+  else if ( stream_.mode == OUTPUT )
+  {
+    convBuffSize = ( size_t ) ( ceilf( stream_.bufferSize * renderSrRatio ) ) * stream_.nDeviceChannels[OUTPUT] * formatBytes( stream_.deviceFormat[OUTPUT] );
     deviceBuffSize = stream_.bufferSize * stream_.nDeviceChannels[OUTPUT] * formatBytes( stream_.deviceFormat[OUTPUT] );
   }
-  else if ( stream_.mode == DUPLEX ) {
-    convBuffSize = std::max( ( size_t ) ( stream_.bufferSize * captureSrRatio ) * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] ),
-                             ( size_t ) ( stream_.bufferSize * renderSrRatio ) * stream_.nDeviceChannels[OUTPUT] * formatBytes( stream_.deviceFormat[OUTPUT] ) );
+  else if ( stream_.mode == DUPLEX )
+  {
+    convBuffSize = std::max( ( size_t ) ( ceilf( stream_.bufferSize * captureSrRatio ) ) * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] ),
+                             ( size_t ) ( ceilf( stream_.bufferSize * renderSrRatio ) ) * stream_.nDeviceChannels[OUTPUT] * formatBytes( stream_.deviceFormat[OUTPUT] ) );
     deviceBuffSize = std::max( stream_.bufferSize * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] ),
                                stream_.bufferSize * stream_.nDeviceChannels[OUTPUT] * formatBytes( stream_.deviceFormat[OUTPUT] ) );
   }
 
+  convBuffSize *= 2; // allow overflow for *SrRatio remainders
   convBuffer = ( char* ) malloc( convBuffSize );
   stream_.deviceBuffer = ( char* ) malloc( deviceBuffSize );
   if ( !convBuffer || !stream_.deviceBuffer ) {
     errorType = RtAudioError::MEMORY_ERROR;
-    errorText_ = "RtApiWasapi::wasapiThread: Error allocating device buffer memory.";
+    errorText = "RtApiWasapi::wasapiThread: Error allocating device buffer memory.";
     goto Exit;
   }
 
@@ -4911,23 +5194,43 @@ void RtApiWasapi::wasapiThread()
       // 2. If 1. was successful: Convert callback buffer to user sample rate and channel count
       //                          Convert callback buffer to user format
 
-      if ( captureAudioClient ) {
-        // Pull callback buffer from inputBuffer
-        callbackPulled = captureBuffer.pullBuffer( convBuffer,
-                                                   ( unsigned int ) ( stream_.bufferSize * captureSrRatio ) * stream_.nDeviceChannels[INPUT],
-                                                   stream_.deviceFormat[INPUT] );
+      if ( captureAudioClient )
+      {
+        int samplesToPull = ( unsigned int ) floorf( stream_.bufferSize * captureSrRatio );
+        if ( captureSrRatio != 1 )
+        {
+          // account for remainders
+          samplesToPull--;
+        }
 
-        if ( callbackPulled ) {
+        convBufferSize = 0;
+        while ( convBufferSize < stream_.bufferSize )
+        {
+          // Pull callback buffer from inputBuffer
+          callbackPulled = captureBuffer.pullBuffer( convBuffer,
+                                                     samplesToPull * stream_.nDeviceChannels[INPUT],
+                                                     stream_.deviceFormat[INPUT] );
+
+          if ( !callbackPulled )
+          {
+            break;
+          }
+
           // Convert callback buffer to user sample rate
-          convertBufferWasapi( stream_.deviceBuffer,
-                               convBuffer,
-                               stream_.nDeviceChannels[INPUT],
-                               captureFormat->nSamplesPerSec,
-                               stream_.sampleRate,
-                               ( unsigned int ) ( stream_.bufferSize * captureSrRatio ),
-                               convBufferSize,
-                               stream_.deviceFormat[INPUT] );
+          unsigned int deviceBufferOffset = convBufferSize * stream_.nDeviceChannels[INPUT] * formatBytes( stream_.deviceFormat[INPUT] );
+          unsigned int convSamples = 0;
 
+          captureResampler->Convert( stream_.deviceBuffer + deviceBufferOffset,
+                                     convBuffer,
+                                     samplesToPull,
+                                     convSamples );
+
+          convBufferSize += convSamples;
+          samplesToPull = 1; // now pull one sample at a time until we have stream_.bufferSize samples
+        }
+
+        if ( callbackPulled )
+        {
           if ( stream_.doConvertBuffer[INPUT] ) {
             // Convert callback buffer to user format
             convertBuffer( stream_.userBuffer[INPUT],
@@ -4968,12 +5271,12 @@ void RtApiWasapi::wasapiThread()
           HANDLE threadHandle = CreateThread( NULL, 0, stopWasapiThread, this, 0, NULL );
           if ( !threadHandle ) {
             errorType = RtAudioError::THREAD_ERROR;
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to instantiate stream stop thread.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to instantiate stream stop thread.";
             goto Exit;
           }
           else if ( !CloseHandle( threadHandle ) ) {
             errorType = RtAudioError::THREAD_ERROR;
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to close stream stop thread handle.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to close stream stop thread handle.";
             goto Exit;
           }
 
@@ -4984,12 +5287,12 @@ void RtApiWasapi::wasapiThread()
           HANDLE threadHandle = CreateThread( NULL, 0, abortWasapiThread, this, 0, NULL );
           if ( !threadHandle ) {
             errorType = RtAudioError::THREAD_ERROR;
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to instantiate stream abort thread.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to instantiate stream abort thread.";
             goto Exit;
           }
           else if ( !CloseHandle( threadHandle ) ) {
             errorType = RtAudioError::THREAD_ERROR;
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to close stream abort thread handle.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to close stream abort thread handle.";
             goto Exit;
           }
 
@@ -5004,24 +5307,26 @@ void RtApiWasapi::wasapiThread()
     // 2. Convert callback buffer to stream sample rate and channel count
     // 3. Push callback buffer into outputBuffer
 
-    if ( renderAudioClient && callbackPulled ) {
-      if ( stream_.doConvertBuffer[OUTPUT] ) {
-        // Convert callback buffer to stream format
-        convertBuffer( stream_.deviceBuffer,
-                       stream_.userBuffer[OUTPUT],
-                       stream_.convertInfo[OUTPUT] );
+    if ( renderAudioClient && callbackPulled )
+    {
+      // if the last call to renderBuffer.PushBuffer() was successful
+      if ( callbackPushed || convBufferSize == 0 )
+      {
+        if ( stream_.doConvertBuffer[OUTPUT] )
+        {
+          // Convert callback buffer to stream format
+          convertBuffer( stream_.deviceBuffer,
+                         stream_.userBuffer[OUTPUT],
+                         stream_.convertInfo[OUTPUT] );
 
+        }
+
+        // Convert callback buffer to stream sample rate
+        renderResampler->Convert( convBuffer,
+                                  stream_.deviceBuffer,
+                                  stream_.bufferSize,
+                                  convBufferSize );
       }
-
-      // Convert callback buffer to stream sample rate
-      convertBufferWasapi( convBuffer,
-                           stream_.deviceBuffer,
-                           stream_.nDeviceChannels[OUTPUT],
-                           stream_.sampleRate,
-                           renderFormat->nSamplesPerSec,
-                           stream_.bufferSize,
-                           convBufferSize,
-                           stream_.deviceFormat[OUTPUT] );
 
       // Push callback buffer into outputBuffer
       callbackPushed = renderBuffer.pushBuffer( convBuffer,
@@ -5042,7 +5347,7 @@ void RtApiWasapi::wasapiThread()
     if ( captureAudioClient ) {
       // if the callback input buffer was not pulled from captureBuffer, wait for next capture event
       if ( !callbackPulled ) {
-        WaitForSingleObject( captureEvent, INFINITE );
+        WaitForSingleObject( loopbackEnabled ? renderEvent : captureEvent, INFINITE );
       }
 
       // Get capture buffer from stream
@@ -5050,7 +5355,7 @@ void RtApiWasapi::wasapiThread()
                                      &bufferFrameCount,
                                      &captureFlags, NULL, NULL );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve capture buffer.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to retrieve capture buffer.";
         goto Exit;
       }
 
@@ -5063,7 +5368,7 @@ void RtApiWasapi::wasapiThread()
           // Release capture buffer
           hr = captureClient->ReleaseBuffer( bufferFrameCount );
           if ( FAILED( hr ) ) {
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to release capture buffer.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to release capture buffer.";
             goto Exit;
           }
         }
@@ -5072,7 +5377,7 @@ void RtApiWasapi::wasapiThread()
           // Inform WASAPI that capture was unsuccessful
           hr = captureClient->ReleaseBuffer( 0 );
           if ( FAILED( hr ) ) {
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to release capture buffer.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to release capture buffer.";
             goto Exit;
           }
         }
@@ -5082,7 +5387,7 @@ void RtApiWasapi::wasapiThread()
         // Inform WASAPI that capture was unsuccessful
         hr = captureClient->ReleaseBuffer( 0 );
         if ( FAILED( hr ) ) {
-          errorText_ = "RtApiWasapi::wasapiThread: Unable to release capture buffer.";
+          errorText = "RtApiWasapi::wasapiThread: Unable to release capture buffer.";
           goto Exit;
         }
       }
@@ -5104,13 +5409,13 @@ void RtApiWasapi::wasapiThread()
       // Get render buffer from stream
       hr = renderAudioClient->GetBufferSize( &bufferFrameCount );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve render buffer size.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to retrieve render buffer size.";
         goto Exit;
       }
 
       hr = renderAudioClient->GetCurrentPadding( &numFramesPadding );
       if ( FAILED( hr ) ) {
-        errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve render buffer padding.";
+        errorText = "RtApiWasapi::wasapiThread: Unable to retrieve render buffer padding.";
         goto Exit;
       }
 
@@ -5119,7 +5424,7 @@ void RtApiWasapi::wasapiThread()
       if ( bufferFrameCount != 0 ) {
         hr = renderClient->GetBuffer( bufferFrameCount, &streamBuffer );
         if ( FAILED( hr ) ) {
-          errorText_ = "RtApiWasapi::wasapiThread: Unable to retrieve render buffer.";
+          errorText = "RtApiWasapi::wasapiThread: Unable to retrieve render buffer.";
           goto Exit;
         }
 
@@ -5132,7 +5437,7 @@ void RtApiWasapi::wasapiThread()
           // Release render buffer
           hr = renderClient->ReleaseBuffer( bufferFrameCount, 0 );
           if ( FAILED( hr ) ) {
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to release render buffer.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to release render buffer.";
             goto Exit;
           }
         }
@@ -5141,7 +5446,7 @@ void RtApiWasapi::wasapiThread()
           // Inform WASAPI that render was unsuccessful
           hr = renderClient->ReleaseBuffer( 0, 0 );
           if ( FAILED( hr ) ) {
-            errorText_ = "RtApiWasapi::wasapiThread: Unable to release render buffer.";
+            errorText = "RtApiWasapi::wasapiThread: Unable to release render buffer.";
             goto Exit;
           }
         }
@@ -5151,7 +5456,7 @@ void RtApiWasapi::wasapiThread()
         // Inform WASAPI that render was unsuccessful
         hr = renderClient->ReleaseBuffer( 0, 0 );
         if ( FAILED( hr ) ) {
-          errorText_ = "RtApiWasapi::wasapiThread: Unable to release render buffer.";
+          errorText = "RtApiWasapi::wasapiThread: Unable to release render buffer.";
           goto Exit;
         }
       }
@@ -5159,7 +5464,10 @@ void RtApiWasapi::wasapiThread()
 
     // if the callback buffer was pushed renderBuffer reset callbackPulled flag
     if ( callbackPushed ) {
+      // unsetting the callbackPulled flag lets the stream know that
+      // the audio device is ready for another callback output buffer.
       callbackPulled = false;
+
       // tick stream time
       RtApi::tickStreamTime();
     }
@@ -5172,16 +5480,19 @@ Exit:
   CoTaskMemFree( renderFormat );
 
   free ( convBuffer );
+  delete renderResampler;
+  delete captureResampler;
 
   CoUninitialize();
 
   // update stream state
   stream_.state = STREAM_STOPPED;
 
-  if ( errorText_.empty() )
-    return;
-  else
+  if ( !errorText.empty() )
+  {
+    errorText_ = errorText;
     error( errorType );
+  }
 }
 
 //******************** End of __WINDOWS_WASAPI__ *********************//
@@ -5191,12 +5502,16 @@ Exit:
 #if defined(__WINDOWS_DS__) // Windows DirectSound API
 
 // Modified by Robin Davies, October 2005
-// - Improvements to DirectX pointer chasing.
+// - Improvements to DirectX pointer chasing. 
 // - Bug fix for non-power-of-two Asio granularity used by Edirol PCR-A30.
 // - Auto-call CoInitialize for DSOUND and ASIO platforms.
 // Various revisions for RtAudio 4.0 by Gary Scavone, April 2007
 // Changed device query structure for RtAudio 4.0.7, January 2010
 
+#include <windows.h>
+#include <process.h>
+#include <mmsystem.h>
+#include <mmreg.h>
 #include <dsound.h>
 #include <assert.h>
 #include <algorithm>
@@ -5231,7 +5546,7 @@ struct DsHandle {
   void *id[2];
   void *buffer[2];
   bool xrun[2];
-  UINT bufferPointer[2];
+  UINT bufferPointer[2];  
   DWORD dsBufferSize[2];
   DWORD dsPointerLeadTime[2]; // the number of bytes ahead of the safe pointer to lead by.
   HANDLE condition;
@@ -5277,8 +5592,8 @@ RtApiDs :: RtApiDs()
 
 RtApiDs :: ~RtApiDs()
 {
-  if ( coInitialized_ ) CoUninitialize(); // balanced call.
   if ( stream_.state != STREAM_CLOSED ) closeStream();
+  if ( coInitialized_ ) CoUninitialize(); // balanced call.
 }
 
 // The DirectSound default output is always the first device.
@@ -6079,7 +6394,7 @@ void RtApiDs :: startStream()
   // Increase scheduler frequency on lesser windows (a side-effect of
   // increasing timer accuracy).  On greater windows (Win2K or later),
   // this is already in effect.
-  timeBeginPeriod( 1 );
+  timeBeginPeriod( 1 ); 
 
   buffersRolling = false;
   duplexPrerollBytes = 0;
@@ -6400,7 +6715,7 @@ void RtApiDs :: callbackEvent()
   }
 
   if ( stream_.mode == OUTPUT || stream_.mode == DUPLEX ) {
-
+    
     LPDIRECTSOUNDBUFFER dsBuffer = (LPDIRECTSOUNDBUFFER) handle->buffer[0];
 
     if ( handle->drainCounter > 1 ) { // write zeros to the output stream
@@ -6467,7 +6782,7 @@ void RtApiDs :: callbackEvent()
     }
 
     if ( dsPointerBetween( nextWritePointer, safeWritePointer, currentWritePointer, dsBufferSize )
-         || dsPointerBetween( endWrite, safeWritePointer, currentWritePointer, dsBufferSize ) ) {
+         || dsPointerBetween( endWrite, safeWritePointer, currentWritePointer, dsBufferSize ) ) { 
       // We've strayed into the forbidden zone ... resync the read pointer.
       handle->xrun[0] = true;
       nextWritePointer = safeWritePointer + handle->dsPointerLeadTime[0] - bufferBytes;
@@ -6541,14 +6856,14 @@ void RtApiDs :: callbackEvent()
     if ( safeReadPointer < (DWORD)nextReadPointer ) safeReadPointer += dsBufferSize; // unwrap offset
     DWORD endRead = nextReadPointer + bufferBytes;
 
-    // Handling depends on whether we are INPUT or DUPLEX.
+    // Handling depends on whether we are INPUT or DUPLEX. 
     // If we're in INPUT mode then waiting is a good thing. If we're in DUPLEX mode,
     // then a wait here will drag the write pointers into the forbidden zone.
-    //
-    // In DUPLEX mode, rather than wait, we will back off the read pointer until
-    // it's in a safe position. This causes dropouts, but it seems to be the only
-    // practical way to sync up the read and write pointers reliably, given the
-    // the very complex relationship between phase and increment of the read and write
+    // 
+    // In DUPLEX mode, rather than wait, we will back off the read pointer until 
+    // it's in a safe position. This causes dropouts, but it seems to be the only 
+    // practical way to sync up the read and write pointers reliably, given the 
+    // the very complex relationship between phase and increment of the read and write 
     // pointers.
     //
     // In order to minimize audible dropouts in DUPLEX mode, we will
@@ -6599,7 +6914,7 @@ void RtApiDs :: callbackEvent()
           error( RtAudioError::SYSTEM_ERROR );
           return;
         }
-
+      
         if ( safeReadPointer < (DWORD)nextReadPointer ) safeReadPointer += dsBufferSize; // unwrap offset
       }
     }
@@ -7231,10 +7546,12 @@ bool RtApiAlsa :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     if ( result == 0 ) {
       if ( nDevices == device ) {
         strcpy( name, "default" );
+        snd_ctl_close( chandle );
         goto foundDevice;
       }
       nDevices++;
     }
+    snd_ctl_close( chandle );
 
     if ( nDevices == 0 ) {
       // This should not happen because a check is made before this function is called.
@@ -7634,30 +7951,41 @@ bool RtApiAlsa :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
     pthread_attr_t attr;
     pthread_attr_init( &attr );
     pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_JOINABLE );
-
-#ifdef SCHED_RR // Undefined with some OSes (eg: NetBSD 1.6.x with GNU Pthread)
+#ifdef SCHED_RR // Undefined with some OSes (e.g. NetBSD 1.6.x with GNU Pthread)
     if ( options && options->flags & RTAUDIO_SCHEDULE_REALTIME ) {
-      // We previously attempted to increase the audio callback priority
-      // to SCHED_RR here via the attributes.  However, while no errors
-      // were reported in doing so, it did not work.  So, now this is
-      // done in the alsaCallbackHandler function.
       stream_.callbackInfo.doRealtime = true;
+      struct sched_param param;
       int priority = options->priority;
       int min = sched_get_priority_min( SCHED_RR );
       int max = sched_get_priority_max( SCHED_RR );
       if ( priority < min ) priority = min;
       else if ( priority > max ) priority = max;
-      stream_.callbackInfo.priority = priority;
+      param.sched_priority = priority;
+
+      // Set the policy BEFORE the priority. Otherwise it fails.
+      pthread_attr_setschedpolicy(&attr, SCHED_RR);
+      pthread_attr_setscope (&attr, PTHREAD_SCOPE_SYSTEM);
+      // This is definitely required. Otherwise it fails.
+      pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+      pthread_attr_setschedparam(&attr, &param);
     }
+    else
+      pthread_attr_setschedpolicy( &attr, SCHED_OTHER );
+#else
+    pthread_attr_setschedpolicy( &attr, SCHED_OTHER );
 #endif
 
     stream_.callbackInfo.isRunning = true;
     result = pthread_create( &stream_.callbackInfo.thread, &attr, alsaCallbackHandler, &stream_.callbackInfo );
     pthread_attr_destroy( &attr );
     if ( result ) {
-      stream_.callbackInfo.isRunning = false;
-      errorText_ = "RtApiAlsa::error creating callback thread!";
-      goto error;
+      // Failed. Try instead with default attributes.
+      result = pthread_create( &stream_.callbackInfo.thread, NULL, alsaCallbackHandler, &stream_.callbackInfo );
+      if ( result ) {
+        stream_.callbackInfo.isRunning = false;
+        errorText_ = "RtApiAlsa::error creating callback thread!";
+        goto error;
+      }
     }
   }
 
@@ -7809,7 +8137,7 @@ void RtApiAlsa :: stopStream()
   AlsaHandle *apiInfo = (AlsaHandle *) stream_.apiHandle;
   snd_pcm_t **handle = (snd_pcm_t **) apiInfo->handles;
   if ( stream_.mode == OUTPUT || stream_.mode == DUPLEX ) {
-    if ( apiInfo->synchronized )
+    if ( apiInfo->synchronized ) 
       result = snd_pcm_drop( handle[0] );
     else
       result = snd_pcm_drain( handle[0] );
@@ -8072,11 +8400,11 @@ static void *alsaCallbackHandler( void *ptr )
   RtApiAlsa *object = (RtApiAlsa *) info->object;
   bool *isRunning = &info->isRunning;
 
-#ifdef SCHED_RR // Undefined with some OSes (eg: NetBSD 1.6.x with GNU Pthread)
+#ifdef SCHED_RR // Undefined with some OSes (e.g. NetBSD 1.6.x with GNU Pthread)
   if ( info->doRealtime ) {
-    pthread_t tID = pthread_self();	 // ID of this thread
-    sched_param prio = { info->priority }; // scheduling priority of thread
-    pthread_setschedparam( tID, SCHED_RR, &prio );
+    std::cerr << "RtAudio alsa: " << 
+             (sched_getscheduler(0) == SCHED_RR ? "" : "_NOT_ ") << 
+             "running realtime scheduling" << std::endl;
   }
 #endif
 
@@ -8159,7 +8487,15 @@ static void *pulseaudio_callback( void * user )
   CallbackInfo *cbi = static_cast<CallbackInfo *>( user );
   RtApiPulse *context = static_cast<RtApiPulse *>( cbi->object );
   volatile bool *isRunning = &cbi->isRunning;
-
+  
+#ifdef SCHED_RR // Undefined with some OSes (e.g. NetBSD 1.6.x with GNU Pthread)
+  if (cbi->doRealtime) {
+    std::cerr << "RtAudio pulse: " << 
+             (sched_getscheduler(0) == SCHED_RR ? "" : "_NOT_ ") << 
+             "running realtime scheduling" << std::endl;
+  }
+#endif
+  
   while ( *isRunning ) {
     pthread_testcancel();
     context->callbackEvent();
@@ -8277,7 +8613,7 @@ void RtApiPulse::callbackEvent( void )
     else
       bytes = stream_.nUserChannels[INPUT] * stream_.bufferSize *
         formatBytes( stream_.userFormat );
-
+            
     if ( pa_simple_read( pah->s_rec, pulse_in, bytes, &pa_error ) < 0 ) {
       errorStream_ << "RtApiPulse::callbackEvent: audio read error, " <<
         pa_strerror( pa_error ) << ".";
@@ -8544,16 +8880,57 @@ bool RtApiPulse::probeDeviceOpen( unsigned int device, StreamMode mode,
 
   if ( !stream_.callbackInfo.isRunning ) {
     stream_.callbackInfo.object = this;
+    
+    stream_.state = STREAM_STOPPED;
+    // Set the thread attributes for joinable and realtime scheduling
+    // priority (optional).  The higher priority will only take affect
+    // if the program is run as root or suid. Note, under Linux
+    // processes with CAP_SYS_NICE privilege, a user can change
+    // scheduling policy and priority (thus need not be root). See
+    // POSIX "capabilities".
+    pthread_attr_t attr;
+    pthread_attr_init( &attr );
+    pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_JOINABLE );
+#ifdef SCHED_RR // Undefined with some OSes (e.g. NetBSD 1.6.x with GNU Pthread)
+    if ( options && options->flags & RTAUDIO_SCHEDULE_REALTIME ) {
+      stream_.callbackInfo.doRealtime = true;
+      struct sched_param param;
+      int priority = options->priority;
+      int min = sched_get_priority_min( SCHED_RR );
+      int max = sched_get_priority_max( SCHED_RR );
+      if ( priority < min ) priority = min;
+      else if ( priority > max ) priority = max;
+      param.sched_priority = priority;
+      
+      // Set the policy BEFORE the priority. Otherwise it fails.
+      pthread_attr_setschedpolicy(&attr, SCHED_RR);
+      pthread_attr_setscope (&attr, PTHREAD_SCOPE_SYSTEM);
+      // This is definitely required. Otherwise it fails.
+      pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+      pthread_attr_setschedparam(&attr, &param);
+    }
+    else
+      pthread_attr_setschedpolicy( &attr, SCHED_OTHER );
+#else
+    pthread_attr_setschedpolicy( &attr, SCHED_OTHER );
+#endif
+
     stream_.callbackInfo.isRunning = true;
-    if ( pthread_create( &pah->thread, NULL, pulseaudio_callback, (void *)&stream_.callbackInfo) != 0 ) {
-      errorText_ = "RtApiPulse::probeDeviceOpen: error creating thread.";
-      goto error;
+    int result = pthread_create( &pah->thread, &attr, pulseaudio_callback, (void *)&stream_.callbackInfo);
+    pthread_attr_destroy(&attr);
+    if(result != 0) {
+      // Failed. Try instead with default attributes.
+      result = pthread_create( &pah->thread, NULL, pulseaudio_callback, (void *)&stream_.callbackInfo);
+      if(result != 0) {
+        stream_.callbackInfo.isRunning = false;
+        errorText_ = "RtApiPulse::probeDeviceOpen: error creating thread.";
+        goto error;
+      }
     }
   }
 
-  stream_.state = STREAM_STOPPED;
-  return true;
-
+  return SUCCESS;
+ 
  error:
   if ( pah && stream_.callbackInfo.isRunning ) {
     pthread_cond_destroy( &pah->runnable_cv );
@@ -8573,6 +8950,7 @@ bool RtApiPulse::probeDeviceOpen( unsigned int device, StreamMode mode,
     stream_.deviceBuffer = 0;
   }
 
+  stream_.state = STREAM_CLOSED;
   return FAILURE;
 }
 
@@ -8697,8 +9075,10 @@ RtAudio::DeviceInfo RtApiOss :: getDeviceInfo( unsigned int device )
     info.nativeFormats |= RTAUDIO_SINT8;
   if ( mask & AFMT_S32_LE || mask & AFMT_S32_BE )
     info.nativeFormats |= RTAUDIO_SINT32;
+#ifdef AFMT_FLOAT
   if ( mask & AFMT_FLOAT )
     info.nativeFormats |= RTAUDIO_FLOAT32;
+#endif
   if ( mask & AFMT_S24_LE || mask & AFMT_S24_BE )
     info.nativeFormats |= RTAUDIO_SINT24;
 
@@ -9025,7 +9405,7 @@ bool RtApiOss :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigned
   }
 
   // Verify the sample rate setup worked.
-  if ( abs( srate - sampleRate ) > 100 ) {
+  if ( abs( srate - (int)sampleRate ) > 100 ) {
     close( fd );
     errorStream_ << "RtApiOss::probeDeviceOpen: device (" << ainfo.name << ") does not support sample rate (" << sampleRate << ").";
     errorText_ = errorStream_.str();
@@ -9132,8 +9512,9 @@ bool RtApiOss :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigned
     pthread_attr_t attr;
     pthread_attr_init( &attr );
     pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_JOINABLE );
-#ifdef SCHED_RR // Undefined with some OSes (eg: NetBSD 1.6.x with GNU Pthread)
+#ifdef SCHED_RR // Undefined with some OSes (e.g. NetBSD 1.6.x with GNU Pthread)
     if ( options && options->flags & RTAUDIO_SCHEDULE_REALTIME ) {
+      stream_.callbackInfo.doRealtime = true;
       struct sched_param param;
       int priority = options->priority;
       int min = sched_get_priority_min( SCHED_RR );
@@ -9141,8 +9522,13 @@ bool RtApiOss :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigned
       if ( priority < min ) priority = min;
       else if ( priority > max ) priority = max;
       param.sched_priority = priority;
-      pthread_attr_setschedparam( &attr, &param );
-      pthread_attr_setschedpolicy( &attr, SCHED_RR );
+      
+      // Set the policy BEFORE the priority. Otherwise it fails.
+      pthread_attr_setschedpolicy(&attr, SCHED_RR);
+      pthread_attr_setscope (&attr, PTHREAD_SCOPE_SYSTEM);
+      // This is definitely required. Otherwise it fails.
+      pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+      pthread_attr_setschedparam(&attr, &param);
     }
     else
       pthread_attr_setschedpolicy( &attr, SCHED_OTHER );
@@ -9154,9 +9540,13 @@ bool RtApiOss :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigned
     result = pthread_create( &stream_.callbackInfo.thread, &attr, ossCallbackHandler, &stream_.callbackInfo );
     pthread_attr_destroy( &attr );
     if ( result ) {
-      stream_.callbackInfo.isRunning = false;
-      errorText_ = "RtApiOss::error creating callback thread!";
-      goto error;
+      // Failed. Try instead with default attributes.
+      result = pthread_create( &stream_.callbackInfo.thread, NULL, ossCallbackHandler, &stream_.callbackInfo );
+      if ( result ) {
+        stream_.callbackInfo.isRunning = false;
+        errorText_ = "RtApiOss::error creating callback thread!";
+        goto error;
+      }
     }
   }
 
@@ -9183,6 +9573,7 @@ bool RtApiOss :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigned
     stream_.deviceBuffer = 0;
   }
 
+  stream_.state = STREAM_CLOSED;
   return FAILURE;
 }
 
@@ -9511,6 +9902,14 @@ static void *ossCallbackHandler( void *ptr )
   CallbackInfo *info = (CallbackInfo *) ptr;
   RtApiOss *object = (RtApiOss *) info->object;
   bool *isRunning = &info->isRunning;
+
+#ifdef SCHED_RR // Undefined with some OSes (e.g. NetBSD 1.6.x with GNU Pthread)
+  if (info->doRealtime) {
+    std::cerr << "RtAudio oss: " << 
+             (sched_getscheduler(0) == SCHED_RR ? "" : "_NOT_ ") << 
+             "running realtime scheduling" << std::endl;
+  }
+#endif
 
   while ( *isRunning == true ) {
     pthread_testcancel();

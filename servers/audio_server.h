@@ -78,6 +78,7 @@ public:
 		SPEAKER_SURROUND_31,
 		SPEAKER_SURROUND_51,
 		SPEAKER_SURROUND_71,
+		SPEAKER_16,
 	};
 
 	static const int DEFAULT_MIX_RATE = 44100;
@@ -154,6 +155,7 @@ public:
 		SPEAKER_SURROUND_31,
 		SPEAKER_SURROUND_51,
 		SPEAKER_SURROUND_71,
+		SPEAKER_16,
 	};
 
 	enum {
@@ -278,6 +280,7 @@ public:
 			case SPEAKER_SURROUND_31: return 2;
 			case SPEAKER_SURROUND_51: return 3;
 			case SPEAKER_SURROUND_71: return 4;
+			case SPEAKER_16:          return 5;
 		}
 		ERR_FAIL_V(1);
 	}
